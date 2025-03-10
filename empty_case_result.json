@@ -1,0 +1,19 @@
+{
+  "target_file": {
+    "file_path": "test_simple.py",
+    "code": "\nimport os\nimport sys\nimport time\n\ndef hello():\n    \"\"\"A simple test function.\"\"\"\n    print(\"Hello, world!\")\n    print(f\"Current time: {time.time()}\")\n    return os.path.join(os.getcwd(), \"test\")\n\nif __name__ == \"__main__\":\n    hello()\n",
+    "type": "target",
+    "docstring": ""
+  },
+  "referenced_files": [],
+  "additional_files": [],
+  "total_files": 1,
+  "token_count": 33,
+  "token_limit": 8000,
+  "metadata": {
+    "original_imported_files_count": 0,
+    "original_importing_files_count": 0,
+    "original_additional_files_count": 0,
+    "readme_files_count": 0
+  }
+}

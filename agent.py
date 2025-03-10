@@ -119,6 +119,7 @@ def get_python_code(target_file: str, root_repo_path: Optional[str] = None) -> D
     
     # Find potential imports in the target file that weren't resolved
     potential_imports = set()
+    project_imports = set()  # Track full project-specific import paths
     try:
         with open(target_file, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -128,20 +129,31 @@ def get_python_code(target_file: str, root_repo_path: Optional[str] = None) -> D
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for name in node.names:
-                    potential_imports.add(name.name.split('.')[0])
+                    import_name = name.name
+                    potential_imports.add(import_name.split('.')[0])
+                    # Store the full import name for project-specific imports
+                    project_imports.add(import_name)
             elif isinstance(node, ast.ImportFrom):
                 if node.module:
-                    potential_imports.add(node.module.split('.')[0])
+                    module_name = node.module
+                    potential_imports.add(module_name.split('.')[0])
+                    # Store the full module name for project-specific imports
+                    project_imports.add(module_name)
+                    # Also add the imported objects
+                    for name in node.names:
+                        full_import = f"{module_name}.{name.name}"
+                        project_imports.add(full_import)
         
         print(f"Potential imports found in {target_file}: {potential_imports}")
+        print(f"Project-specific imports: {project_imports}")
     except Exception as e:
         print(f"Error analyzing imports in {target_file}: {e}")
     
-    # Process files by relevance
+    # Process files by relevance, with special handling for project imports
     for py_file in all_python_files:
         if py_file not in included_paths:
             # Skip if we've already included enough files
-            if len(additional_files) >= 5:  # Increased limit for more context
+            if len(additional_files) >= 15:  # Increased limit for more context
                 break
                 
             # Calculate relevance score (higher is more relevant)
@@ -156,6 +168,21 @@ def get_python_code(target_file: str, root_repo_path: Optional[str] = None) -> D
             if basename in potential_imports:
                 relevance += 4
                 print(f"Found matching import: {basename} in {py_file}")
+                
+            # Handle project-specific imports by mapping file paths to import paths
+            rel_path = os.path.relpath(py_file, root_repo_path)
+            module_path = rel_path.replace('/', '.').replace('.py', '')
+            
+            # Check if this file matches any of the project imports
+            is_import_related = False
+            matching_import = None
+            for project_import in project_imports:
+                # Check if the module path might match a project import
+                if project_import.startswith(module_path) or module_path.endswith(project_import):
+                    relevance += 5
+                    is_import_related = True
+                    matching_import = project_import
+                    print(f"Found matching project import: {project_import} -> {module_path} in {py_file}")
             
             # Only include files with some relevance
             if relevance > 0:
@@ -171,20 +198,38 @@ def get_python_code(target_file: str, root_repo_path: Optional[str] = None) -> D
                         docstring = ""
                     
                     rel_path = os.path.relpath(py_file, root_repo_path)
-                    additional_files.append({
-                        "file_path": rel_path,
-                        "code": content,
-                        "type": "related_by_directory" if os.path.dirname(py_file) == target_dir else "related_by_import",
-                        "docstring": docstring,
-                        "relevance": relevance,
-                        "token_count": code_grapher._count_tokens(content)
-                    })
-                    print(f"Added related file: {rel_path} (relevance: {relevance})")
+                    token_count = code_grapher._count_tokens(content)
+                    
+                    # If file is related by import, add to files_imported_by_target
+                    # so it will be included in referenced_files
+                    if is_import_related or basename in potential_imports:
+                        files_imported_by_target.append({
+                            "file_path": rel_path,
+                            "object_name": matching_import or basename,
+                            "object_type": "module",
+                            "code": content,
+                            "docstring": docstring,
+                            "truncated": False,
+                            "token_count": token_count
+                        })
+                        print(f"Added imported file: {rel_path} (import: {matching_import or basename})")
+                    else:
+                        # Otherwise add to additional_files
+                        additional_files.append({
+                            "file_path": rel_path,
+                            "code": content,
+                            "type": "related_by_directory" if os.path.dirname(py_file) == target_dir else "related",
+                            "docstring": docstring,
+                            "relevance": relevance, 
+                            "token_count": token_count
+                        })
+                        print(f"Added related file: {rel_path} (relevance: {relevance})")
                 except Exception as e:
                     print(f"Error reading file {py_file}: {e}")
     
     # Sort additional files by relevance (but we'll use token count later when adding files)
-    additional_files.sort(key=lambda x: x.pop('relevance', 0), reverse=True)
+    if additional_files:  # Only sort if there are files to sort
+        additional_files.sort(key=lambda x: x.pop('relevance', 0), reverse=True)
     
     # Add README files to additional files and track token count
     readme_files_data = []
@@ -211,11 +256,18 @@ def get_python_code(target_file: str, root_repo_path: Optional[str] = None) -> D
     # Begin building the final list of referenced files with target file already counted
     final_referenced_files = []
     
-    # Sort imported files by size (smallest to largest)
-    files_imported_by_target.sort(key=lambda x: x["token_count"])
+    # Sort imported files by size (smallest to largest) if any exist
+    if files_imported_by_target:
+        files_imported_by_target.sort(key=lambda x: x["token_count"])
     
-    # Sort files that import the target by size (smallest to largest)
-    files_importing_target.sort(key=lambda x: x["token_count"])
+    # Sort files that import the target by size (smallest to largest) if any exist
+    if files_importing_target:
+        files_importing_target.sort(key=lambda x: x["token_count"])
+        
+    # Log information about the number of files found
+    print(f"Found {len(files_imported_by_target)} files imported by target")
+    print(f"Found {len(files_importing_target)} files importing target")
+    print(f"Found {len(additional_files)} additional related files")
     
     # Add files that the target imports, from smallest to largest
     for file_data in files_imported_by_target:
@@ -276,7 +328,14 @@ def get_python_code(target_file: str, root_repo_path: Optional[str] = None) -> D
         "additional_files": final_additional_files,
         "total_files": 1 + len(final_referenced_files) + len(final_additional_files),
         "token_count": current_token_count,
-        "token_limit": token_limit
+        "token_limit": token_limit,
+        # Include metadata about the original numbers before token filtering
+        "metadata": {
+            "original_imported_files_count": len(files_imported_by_target),
+            "original_importing_files_count": len(files_importing_target),
+            "original_additional_files_count": len(additional_files),
+            "readme_files_count": len(readme_files_data)
+        }
     }
     
     return llm_friendly_format

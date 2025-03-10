@@ -229,7 +229,7 @@ class CodeGrapher:
         
         return None
     
-    def _resolve_imports(self, ast_tree: ast.Module, file_path: str) -> None:
+    def _resolve_imports(self, ast_tree: ast.Module, file_path: str, import_depth: int = 0) -> None:
         """
         Resolve imports in the AST and follow references.
         
@@ -239,9 +239,16 @@ class CodeGrapher:
         Args:
             ast_tree: The AST of the module.
             file_path: Path to the file containing the AST.
+            import_depth: Current depth in the import resolution chain.
         """
+        # Guard against excessive recursion
+        max_import_depth = 10  # Set a reasonable limit for import depth
+        if import_depth > max_import_depth:
+            print(f"WARNING: Maximum import depth reached ({max_import_depth}) when processing {file_path}. Stopping import resolution.")
+            return
+            
         file_dir = os.path.dirname(file_path)
-        print(f"DEBUG: Resolving imports in file: {file_path}")
+        print(f"DEBUG: Resolving imports in file: {file_path} (depth: {import_depth})")
         
         # Get the project root directory (assuming it's a parent of file_path)
         project_root = file_dir
@@ -260,7 +267,7 @@ class CodeGrapher:
             if isinstance(node, ast.Import):
                 for name in node.names:
                     module_name = name.name
-                    self._process_imported_module(module_name, file_dir)
+                    self._process_imported_module(module_name, file_dir, import_depth + 1)
                     
                     # Try to find the module in the project directory
                     self._try_find_project_module(module_name, project_root, file_dir)
@@ -271,12 +278,12 @@ class CodeGrapher:
                     module_name = node.module
                     for name in node.names:
                         imported_name = name.name
-                        self._process_imported_object(module_name, imported_name, file_dir)
+                        self._process_imported_object(module_name, imported_name, file_dir, import_depth + 1)
                         
                     # Try to find the module in the project directory
                     self._try_find_project_module(module_name, project_root, file_dir)
     
-    def _process_imported_module(self, module_name: str, file_dir: str) -> None:
+    def _process_imported_module(self, module_name: str, file_dir: str, import_depth: int = 0) -> None:
         """
         Process an imported module and extract its code.
         
@@ -286,8 +293,9 @@ class CodeGrapher:
         Args:
             module_name: Name of the imported module.
             file_dir: Directory of the file with the import.
+            import_depth: Current depth in the import resolution chain.
         """
-        print(f"DEBUG: Processing imported module: {module_name} from {file_dir}")
+        print(f"DEBUG: Processing imported module: {module_name} from {file_dir} (depth: {import_depth})")
         # Try to find the module file
         try:
             # First try in the same directory
@@ -309,7 +317,7 @@ class CodeGrapher:
                     print(f"DEBUG: Could not find module: {module_name}")
                     return
             
-            # Skip if already visited
+            # Skip if already visited - strict check to prevent recursion
             if module_path in self.visited_files:
                 print(f"DEBUG: Module already visited: {module_path}")
                 return
@@ -340,14 +348,14 @@ class CodeGrapher:
                 
                 # Recursively resolve imports in this module
                 print(f"DEBUG: Resolving imports in {module_path}")
-                self._resolve_imports(ast_tree, module_path)
+                self._resolve_imports(ast_tree, module_path, import_depth)
             else:
                 print(f"DEBUG: Failed to parse module: {module_path}")
         
         except Exception as e:
             print(f"Error processing import {module_name}: {e}")
     
-    def _process_imported_object(self, module_name: str, object_name: str, file_dir: str) -> None:
+    def _process_imported_object(self, module_name: str, object_name: str, file_dir: str, import_depth: int = 0) -> None:
         """
         Process a specific imported object and extract its code.
         
@@ -358,6 +366,7 @@ class CodeGrapher:
             module_name: Name of the module containing the object.
             object_name: Name of the imported object.
             file_dir: Directory of the file with the import.
+            import_depth: Current depth in the import resolution chain.
         """
         print(f"DEBUG: Processing imported object: {module_name}.{object_name} from {file_dir}")
         # Similar to _process_imported_module but focusing on a specific object
@@ -402,7 +411,7 @@ class CodeGrapher:
                     print(f"DEBUG: Added to visited files: {module_path}")
                     # Also process other imports in this module
                     print(f"DEBUG: Resolving imports in {module_path}")
-                    self._resolve_imports(ast_tree, module_path)
+                    self._resolve_imports(ast_tree, module_path, import_depth)
                 
                 # Extract the specific object
                 print(f"DEBUG: Extracting object: {object_name} from {module_path}")
