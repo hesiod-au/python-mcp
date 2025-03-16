@@ -229,7 +229,7 @@ class CodeGrapher:
         
         return None
     
-    def _resolve_imports(self, ast_tree: ast.Module, file_path: str, import_depth: int = 0) -> None:
+    def _resolve_imports(self, ast_tree: ast.Module, file_path: str, import_depth: int = 0, visited_in_call_stack: Optional[Set[str]] = None) -> None:
         """
         Resolve imports in the AST and follow references.
         
@@ -240,15 +240,28 @@ class CodeGrapher:
             ast_tree: The AST of the module.
             file_path: Path to the file containing the AST.
             import_depth: Current depth in the import resolution chain.
+            visited_in_call_stack: Set of file paths that have been visited in the current call stack,
+                                  used to detect import cycles.
         """
+        # Initialize visited_in_call_stack if it's None
+        if visited_in_call_stack is None:
+            visited_in_call_stack = set()
+            
+        # Detect import cycles by checking if this file has been visited in this call stack
+        if file_path in visited_in_call_stack:
+            print(f"WARNING: Import cycle detected for {file_path}. Stopping import resolution.")
+            return
+            
+        # Add this file to the call stack visited set
+        visited_in_call_stack = visited_in_call_stack.union({file_path})
+            
         # Guard against excessive recursion
-        max_import_depth = 10  # Set a reasonable limit for import depth
+        max_import_depth = 5  # Reduced limit for import depth
         if import_depth > max_import_depth:
             print(f"WARNING: Maximum import depth reached ({max_import_depth}) when processing {file_path}. Stopping import resolution.")
             return
             
         file_dir = os.path.dirname(file_path)
-        print(f"DEBUG: Resolving imports in file: {file_path} (depth: {import_depth})")
         
         # Get the project root directory (assuming it's a parent of file_path)
         project_root = file_dir
@@ -259,15 +272,13 @@ class CodeGrapher:
                 break
             project_root = parent
         
-        print(f"DEBUG: Using project root: {project_root}")
-        
         # Track import statements
         for node in ast.walk(ast_tree):
             # Handle 'import module' statements
             if isinstance(node, ast.Import):
                 for name in node.names:
                     module_name = name.name
-                    self._process_imported_module(module_name, file_dir, import_depth + 1)
+                    self._process_imported_module(module_name, file_dir, import_depth + 1, visited_in_call_stack)
                     
                     # Try to find the module in the project directory
                     self._try_find_project_module(module_name, project_root, file_dir)
@@ -278,12 +289,12 @@ class CodeGrapher:
                     module_name = node.module
                     for name in node.names:
                         imported_name = name.name
-                        self._process_imported_object(module_name, imported_name, file_dir, import_depth + 1)
+                        self._process_imported_object(module_name, imported_name, file_dir, import_depth + 1, visited_in_call_stack)
                         
                     # Try to find the module in the project directory
                     self._try_find_project_module(module_name, project_root, file_dir)
     
-    def _process_imported_module(self, module_name: str, file_dir: str, import_depth: int = 0) -> None:
+    def _process_imported_module(self, module_name: str, file_dir: str, import_depth: int = 0, visited_in_call_stack: Optional[Set[str]] = None) -> None:
         """
         Process an imported module and extract its code.
         
@@ -294,46 +305,40 @@ class CodeGrapher:
             module_name: Name of the imported module.
             file_dir: Directory of the file with the import.
             import_depth: Current depth in the import resolution chain.
+            visited_in_call_stack: Set of file paths visited in the current call stack.
         """
-        print(f"DEBUG: Processing imported module: {module_name} from {file_dir} (depth: {import_depth})")
+        if visited_in_call_stack is None:
+            visited_in_call_stack = set()
+            
         # Try to find the module file
         try:
             # First try in the same directory
             local_module_path = os.path.join(file_dir, f"{module_name.split('.')[-1]}.py")
-            print(f"DEBUG: Checking local path: {local_module_path}")
             
             if os.path.exists(local_module_path):
                 module_path = local_module_path
-                print(f"DEBUG: Found module in local path: {module_path}")
             else:
                 # Try to resolve using Python's import system
-                print(f"DEBUG: Trying to resolve using importlib: {module_name}")
                 spec = importlib.util.find_spec(module_name)
                 if spec and spec.origin and spec.origin.endswith('.py'):
                     module_path = spec.origin
-                    print(f"DEBUG: Found module using importlib: {module_path}")
                 else:
                     # Skip if we can't find the module
-                    print(f"DEBUG: Could not find module: {module_name}")
                     return
             
             # Skip if already visited - strict check to prevent recursion
             if module_path in self.visited_files:
-                print(f"DEBUG: Module already visited: {module_path}")
                 return
                 
             # Skip system libraries and files outside the project
             if self._is_external_library(module_path):
-                print(f"DEBUG: Skipping external library: {module_path}")
                 return
             
             # Parse the module
-            print(f"DEBUG: Parsing module: {module_path}")
             ast_tree, source_code = self._parse_file(module_path)
             if ast_tree and source_code:
                 # Add the module file to visited
                 self.visited_files.add(module_path)
-                print(f"DEBUG: Added to visited files: {module_path}")
                 
                 # Extract each class and function from the module
                 extracted_count = 0
@@ -344,13 +349,10 @@ class CodeGrapher:
                             obj["reference_type"] = "import"
                             self.referenced_objects.append(obj)
                             extracted_count += 1
-                print(f"DEBUG: Extracted {extracted_count} objects from {module_path}")
                 
-                # Recursively resolve imports in this module
-                print(f"DEBUG: Resolving imports in {module_path}")
-                self._resolve_imports(ast_tree, module_path, import_depth)
-            else:
-                print(f"DEBUG: Failed to parse module: {module_path}")
+                # Recursively resolve imports in this module, but only if we're not exceeding depth limits
+                if import_depth < 5:  # Hard limit on recursion depth
+                    self._resolve_imports(ast_tree, module_path, import_depth, visited_in_call_stack)
         
         except Exception as e:
             print(f"Error processing import {module_name}: {e}")
@@ -408,10 +410,10 @@ class CodeGrapher:
                 # Add the module file to visited if not already
                 if module_path not in self.visited_files:
                     self.visited_files.add(module_path)
-                    print(f"DEBUG: Added to visited files: {module_path}")
-                    # Also process other imports in this module
-                    print(f"DEBUG: Resolving imports in {module_path}")
-                    self._resolve_imports(ast_tree, module_path, import_depth)
+                    
+                    # Also process other imports in this module, but only if we're not exceeding depth limits
+                    if import_depth < 5:  # Hard limit on recursion depth
+                        self._resolve_imports(ast_tree, module_path, import_depth, visited_in_call_stack)
                 
                 # Extract the specific object
                 print(f"DEBUG: Extracting object: {object_name} from {module_path}")
@@ -523,7 +525,7 @@ class CodeGrapher:
         
         return result_dict
 
-    def _try_find_project_module(self, module_name: str, project_root: str, file_dir: str) -> None:
+    def _try_find_project_module(self, module_name: str, project_root: str, file_dir: str, import_depth: int = 0, visited_in_call_stack: Optional[Set[str]] = None) -> None:
         """
         Try to find a module within the project directory structure.
         
@@ -535,16 +537,26 @@ class CodeGrapher:
             project_root: Root directory of the project.
             file_dir: Directory of the file with the import.
         """
-        print(f"DEBUG: Trying to find project module: {module_name} in {project_root}")
+        if visited_in_call_stack is None:
+            visited_in_call_stack = set()
         
+        # Don't process if we're too deep to avoid excessive recursion
+        if import_depth > 5:
+            return
+            
         # Extract the base module name (without submodules)
         base_module = module_name.split('.')[0]
         
-        # Look for Python files with the module name
+        # Look for Python files with the module name, but limit search to avoid excessive traversal
+        found_files = []
         for root, _, files in os.walk(project_root):
             # Skip external libraries and cache directories
             if self._is_external_library(root) or any(d in root for d in ['__pycache__', '.git']):
                 continue
+                
+            # Limit the number of files we process to avoid excessive recursion
+            if len(found_files) > 10:  # Only process a reasonable number of files
+                break
                 
             for file in files:
                 if file == f"{base_module}.py":
@@ -576,8 +588,8 @@ class CodeGrapher:
                         
                         print(f"DEBUG: Extracted {extracted_count} objects from project module: {module_path}")
                         
-                        # Recursively resolve imports in this module
-                        self._resolve_imports(ast_tree, module_path)
+                        # Recursively resolve imports in this module with depth tracking
+                        self._resolve_imports(ast_tree, module_path, 0, set([module_path]))
                         
                         # We found the module, no need to continue searching
                         return
