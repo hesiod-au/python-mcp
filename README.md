@@ -1,4 +1,5 @@
 # Python MCP Server for Code Graph Extraction
+[![smithery badge](https://smithery.ai/badge/@hesiod-au/python-mcp)](https://smithery.ai/server/@hesiod-au/python-mcp)
 
 This MCP (Model Context Protocol) server provides tools for extracting and analyzing Python code structures, focusing on import/export relationships between files. This is a lightweight implementation that doesn't require an agent system, making it easy to integrate into any Python application.
 
@@ -23,6 +24,15 @@ The server exposes a powerful code extraction tool that:
 
 ## Installation
 
+### Installing via Smithery
+
+To install Python Code Explorer for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@hesiod-au/python-mcp):
+
+```bash
+npx -y @smithery/cli install @hesiod-au/python-mcp --client claude
+```
+
+### Manual Installation
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/python-mcp-new.git
