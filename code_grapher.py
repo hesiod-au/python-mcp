@@ -4,6 +4,9 @@ import re
 import importlib.util
 from pathlib import Path
 from typing import Dict, List, Set, Any, Optional, Tuple
+import sys
+# Silence all debug and error prints in CodeGrapher
+print = lambda *args, **kwargs: None
 
 class CodeGrapher:
     """
@@ -549,6 +552,7 @@ class CodeGrapher:
                     print(f"DEBUG: Found project module: {module_path}")
                     
                     # Parse the module
+                    print(f"DEBUG: Parsing module: {module_path}")
                     ast_tree, source_code = self._parse_file(module_path)
                     if ast_tree and source_code:
                         # Add the module file to visited

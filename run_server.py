@@ -38,12 +38,12 @@ def main():
         try:
             import dotenv
             dotenv.load_dotenv(args.env_file)
-            print(f"Loaded environment from {args.env_file}")
+            print(f"Loaded environment from {args.env_file}", file=sys.stderr)
         except ImportError:
-            print("Warning: python-dotenv not installed, skipping env file loading")
+            print("Warning: python-dotenv not installed, skipping env file loading", file=sys.stderr)
     
     # Run the server
-    print(f"Starting {mcp.name} MCP server...")
+    print(f"Starting {mcp.name} MCP server...", file=sys.stderr)
     mcp.run()
 
 if __name__ == "__main__":
